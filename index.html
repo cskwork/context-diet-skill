@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>context-diet — trim Claude Code's system-prompt bloat</title>
+<meta name="description" content="Measure the tool definitions, bundled skills and features shipped on every Claude Code request, then deny the unused ones. A skill with a logging proxy and a safe settings.json applier." />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%82%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+  @property --sx{syntax:'<number>';inherits:false;initial-value:1}
+  :root{
+    --bg:#0d0e0b;
+    --bg-2:#131510;
+    --panel:#16180f;
+    --ink:#ecebe0;
+    --ink-dim:#a7a99a;
+    --ink-faint:#6f7263;
+    --line:#2a2c22;
+    --line-2:#3a3d2f;
+    --acid:#c9f24e;      /* "lean" / go */
+    --acid-deep:#9cc321;
+    --amber:#e6a94b;     /* "bloat" / before — distinct from acid without red/green reliance */
+    --mono:'JetBrains Mono',ui-monospace,'SFMono-Regular',Menlo,monospace;
+    --serif:'Fraunces',Georgia,'Times New Roman',serif;
+    --max:1120px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  @media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font-family:var(--mono);font-size:16px;line-height:1.6;
+    -webkit-font-smoothing:antialiased;overflow-x:hidden;
+  }
+  /* faint grain + ledger atmosphere */
+  body::before{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;opacity:.05;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  body::after{
+    content:"";position:fixed;inset:0;pointer-events:none;z-index:0;
+    background:radial-gradient(120% 80% at 82% -10%, rgba(201,242,78,.10), transparent 55%);
+  }
+  .wrap{max-width:var(--max);margin:0 auto;padding:0 28px;position:relative;z-index:1}
+  a{color:inherit;text-decoration:none}
+  ::selection{background:var(--acid);color:#0d0e0b}
+
+  /* ---------- nav ---------- */
+  nav{position:sticky;top:0;z-index:20;backdrop-filter:blur(8px);
+    background:linear-gradient(180deg,rgba(13,14,11,.92),rgba(13,14,11,.55));
+    border-bottom:1px solid var(--line)}
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:64px}
+  .brand{font-family:var(--mono);font-weight:700;letter-spacing:-.02em;font-size:15px;display:flex;gap:.5ch;align-items:center}
+  .brand b{color:var(--acid)}
+  .nav-links{display:flex;gap:26px;align-items:center;font-size:13px;color:var(--ink-dim)}
+  .nav-links a{transition:color .2s}
+  .nav-links a:hover{color:var(--acid)}
+  .nav-gh{border:1px solid var(--line-2);padding:7px 14px;border-radius:2px;color:var(--ink)}
+  .nav-gh:hover{border-color:var(--acid);color:var(--acid)}
+  @media(max-width:640px){.nav-links .hide-sm{display:none}}
+
+  /* ---------- hero ---------- */
+  header{padding:86px 0 64px;border-bottom:1px solid var(--line)}
+  .eyebrow{font-size:12px;letter-spacing:.28em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:26px}
+  .eyebrow .dot{color:var(--acid)}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(46px,9vw,104px);line-height:.94;
+    letter-spacing:-.03em;margin:0 0 8px}
+  h1 .thin{font-weight:400;font-style:italic;color:var(--ink-dim)}
+  h1 .cut{position:relative;white-space:nowrap}
+  h1 .cut::after{content:"";position:absolute;left:-2%;right:-2%;top:54%;height:3px;
+    background:var(--amber);transform:scaleX(var(--sx,1));transform-origin:left;border-radius:2px}
+  .lede{max-width:60ch;color:var(--ink-dim);font-size:clamp(15px,2vw,18px);margin:28px 0 0}
+  .lede b{color:var(--ink);font-weight:500}
+
+  .cta{display:flex;flex-wrap:wrap;gap:14px;margin-top:38px}
+  .btn{font-family:var(--mono);font-size:14px;font-weight:500;padding:13px 22px;border-radius:3px;
+    border:1px solid var(--line-2);display:inline-flex;gap:.7ch;align-items:center;transition:.2s}
+  .btn.primary{background:var(--acid);color:#0d0e0b;border-color:var(--acid);font-weight:700}
+  .btn.primary:hover{background:#d7ff5e;transform:translateY(-2px)}
+  .btn.ghost:hover{border-color:var(--acid);color:var(--acid)}
+
+  /* ---------- counter ---------- */
+  .meter{margin-top:56px;border:1px solid var(--line);border-radius:6px;background:
+    linear-gradient(180deg,var(--panel),#101208);overflow:hidden}
+  .meter-top{display:flex;justify-content:space-between;align-items:center;padding:12px 20px;
+    border-bottom:1px solid var(--line);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint)}
+  .meter-top .live{display:flex;gap:.6ch;align-items:center;color:var(--acid-deep)}
+  .meter-top .live i{width:7px;height:7px;border-radius:50%;background:var(--acid);display:inline-block;
+    box-shadow:0 0 0 0 rgba(201,242,78,.6);animation:pulse 2.4s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(201,242,78,.5)}70%{box-shadow:0 0 0 8px rgba(201,242,78,0)}100%{box-shadow:0 0 0 0 rgba(201,242,78,0)}}
+  @media (prefers-reduced-motion:reduce){.meter-top .live i{animation:none}}
+  .meter-grid{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:8px;padding:34px 24px}
+  .m-col{display:flex;flex-direction:column;gap:8px}
+  .m-col .k{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-faint)}
+  .m-num{font-family:var(--serif);font-weight:500;font-size:clamp(34px,6.4vw,60px);line-height:1;
+    letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .m-col.before .m-num{color:var(--amber)}
+  .m-col.after .m-num{color:var(--acid)}
+  .m-col .u{font-size:12px;color:var(--ink-faint)}
+  .m-arrow{font-family:var(--mono);color:var(--ink-faint);font-size:22px;text-align:center}
+  .m-delta{padding:12px 24px;border-top:1px dashed var(--line-2);font-size:12.5px;color:var(--ink-dim);
+    display:flex;justify-content:space-between;flex-wrap:wrap;gap:8px}
+  .m-delta b{color:var(--acid);font-weight:700}
+  .m-delta .note{color:var(--ink-faint)}
+  @media(max-width:560px){.meter-grid{grid-template-columns:1fr;text-align:left}.m-arrow{transform:rotate(90deg)}}
+
+  /* ---------- generic section ---------- */
+  section{padding:88px 0;border-bottom:1px solid var(--line)}
+  .sec-head{display:flex;align-items:baseline;gap:16px;margin-bottom:40px}
+  .sec-no{font-size:12px;color:var(--acid-deep);letter-spacing:.1em}
+  .sec-title{font-family:var(--serif);font-weight:600;font-size:clamp(28px,4.4vw,42px);letter-spacing:-.02em;line-height:1.05;margin:0}
+  .sec-sub{color:var(--ink-dim);max-width:64ch;margin:14px 0 0;font-size:15px}
+
+  /* bare vs scoped */
+  .duo{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:720px){.duo{grid-template-columns:1fr}}
+  .card{border:1px solid var(--line);border-radius:6px;background:var(--panel);padding:26px}
+  .card .tag{font-size:11px;letter-spacing:.14em;text-transform:uppercase;padding:4px 9px;border-radius:2px;display:inline-block}
+  .tag.keep{background:rgba(201,242,78,.14);color:var(--acid)}
+  .tag.waste{background:rgba(230,169,75,.14);color:var(--amber)}
+  .card code{font-family:var(--mono);background:#0c0d08;border:1px solid var(--line);padding:3px 8px;border-radius:3px;font-size:13.5px;color:var(--ink);display:inline-block;margin:16px 0 12px}
+  .card p{margin:0;color:var(--ink-dim);font-size:14px}
+  .card .verdict{margin-top:16px;padding-top:14px;border-top:1px solid var(--line);font-size:13px;display:flex;gap:.7ch;align-items:center}
+  .card .verdict.yes{color:var(--acid)}
+  .card .verdict.no{color:var(--ink-faint)}
+
+  /* ledger */
+  .ledger{border:1px solid var(--line);border-radius:6px;overflow:hidden;background:linear-gradient(180deg,var(--panel),#0f1109)}
+  .ledger-h{padding:16px 22px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--ink-faint)}
+  .row{display:grid;grid-template-columns:1fr auto auto;gap:16px;align-items:center;padding:13px 22px;border-bottom:1px solid var(--line);font-size:14px}
+  .row:last-child{border-bottom:none}
+  .row .nm{color:var(--ink);letter-spacing:-.01em}
+  .row .by{color:var(--ink-dim);font-variant-numeric:tabular-nums;font-size:13px}
+  .row .st{font-size:11px;letter-spacing:.08em;text-transform:uppercase;text-align:right;min-width:74px}
+  .row.cut .nm{color:var(--ink-faint);text-decoration:line-through;text-decoration-color:var(--amber)}
+  .row.cut .by{color:var(--ink-faint)}
+  .row .st.removed{color:var(--amber)}
+  .row .st.kept{color:var(--acid-deep)}
+  .ledger-f{display:grid;grid-template-columns:1fr auto auto;gap:16px;padding:18px 22px;background:#0c0d07;font-size:14px}
+  .ledger-f .nm{color:var(--ink);font-weight:700;letter-spacing:.02em}
+  .ledger-f .by{font-variant-numeric:tabular-nums;color:var(--acid);font-weight:700}
+  .ledger-note{margin-top:14px;font-size:12px;color:var(--ink-faint)}
+
+  /* steps */
+  .steps{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  @media(max-width:720px){.steps{grid-template-columns:1fr}}
+  .step{background:var(--bg-2);padding:26px 24px;position:relative}
+  .step .n{font-family:var(--serif);font-size:30px;color:var(--acid);line-height:1;font-weight:600}
+  .step h4{margin:12px 0 8px;font-size:15px;font-weight:700;letter-spacing:-.01em;color:var(--ink)}
+  .step p{margin:0;font-size:13.5px;color:var(--ink-dim)}
+  .step code{color:var(--acid);background:transparent;padding:0;font-size:13px}
+
+  /* config code blocks */
+  .code{border:1px solid var(--line);border-radius:6px;background:#0a0b06;overflow:hidden}
+  .code-h{display:flex;justify-content:space-between;align-items:center;padding:11px 16px;border-bottom:1px solid var(--line);font-size:12px;color:var(--ink-faint)}
+  .code-h .path{color:var(--ink-dim)}
+  .code-h .lvl{font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;padding:3px 8px;border-radius:2px}
+  .lvl.agg{background:rgba(230,169,75,.14);color:var(--amber)}
+  .lvl.safe{background:rgba(201,242,78,.14);color:var(--acid)}
+  pre{margin:0;padding:20px;overflow-x:auto;font-size:12.5px;line-height:1.7;color:var(--ink)}
+  pre .kd{color:var(--acid-deep)}
+  pre .dl{color:var(--amber)}
+  pre .fl{color:#7fb0d6}
+  pre .pu{color:var(--ink-faint)}
+  .cmd{margin-top:22px;border:1px solid var(--line);border-radius:6px;background:#0a0b06;padding:16px 18px;font-size:13px;color:var(--ink);overflow-x:auto}
+  .cmd .p{color:var(--acid);user-select:none}
+  .cmd .c{color:var(--ink-faint)}
+  .config-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media(max-width:820px){.config-grid{grid-template-columns:1fr}}
+
+  /* files table */
+  .files{width:100%;border-collapse:collapse;font-size:14px}
+  .files td{padding:14px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+  .files tr:last-child td{border-bottom:none}
+  .files .f{color:var(--acid);white-space:nowrap;padding-right:24px}
+  .files .d{color:var(--ink-dim)}
+
+  /* footer */
+  footer{padding:64px 0 80px}
+  .foot{display:flex;justify-content:space-between;flex-wrap:wrap;gap:24px;align-items:flex-end}
+  .foot .big{font-family:var(--serif);font-size:clamp(30px,6vw,54px);font-weight:500;letter-spacing:-.02em;line-height:1}
+  .foot .big b{color:var(--acid)}
+  .foot-links{display:flex;flex-direction:column;gap:8px;font-size:13px;color:var(--ink-dim);text-align:right}
+  .foot-links a:hover{color:var(--acid)}
+  .credit{margin-top:40px;padding-top:22px;border-top:1px solid var(--line);font-size:12px;color:var(--ink-faint);display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px}
+  .credit a{color:var(--ink-dim);text-decoration:underline;text-decoration-color:var(--line-2)}
+  .credit a:hover{color:var(--acid)}
+
+  /* reveal (only when motion allowed) */
+  .anim [data-r]{opacity:0;transform:translateY(18px);transition:opacity .7s cubic-bezier(.2,.7,.2,1),transform .7s cubic-bezier(.2,.7,.2,1)}
+  .anim [data-r].in{opacity:1;transform:none}
+</style>
+</head>
+<body>
+<nav>
+  <div class="wrap nav-in">
+    <div class="brand">✂&#65039; context<b>-</b>diet</div>
+    <div class="nav-links">
+      <a href="#idea" class="hide-sm">idea</a>
+      <a href="#method" class="hide-sm">method</a>
+      <a href="#config" class="hide-sm">config</a>
+      <a class="nav-gh" href="https://github.com/cskwork/context-diet-skill">GitHub ↗</a>
+    </div>
+  </div>
+</nav>
+
+<header>
+  <div class="wrap">
+    <div class="eyebrow" data-r>Claude Code <span class="dot">·</span> per-request token ledger</div>
+    <h1 data-r>Put your context<br><span class="thin">on a</span> <span class="cut">diet.</span></h1>
+    <p class="lede" data-r>Every request ships tool definitions, a bundled-skills catalogue and
+      feature instructions you may never use — <b>tens of thousands of tokens per turn</b>,
+      billed every turn, that the model wades through before reaching your actual problem.
+      Measure the fat. Then cut it.</p>
+
+    <div class="cta" data-r>
+      <a class="btn primary" href="https://github.com/cskwork/context-diet-skill">Get the skill →</a>
+      <a class="btn ghost" href="#method">See the method</a>
+    </div>
+
+    <div class="meter" data-r>
+      <div class="meter-top">
+        <span>system-prompt payload</span>
+        <span class="live"><i></i> measured via /context</span>
+      </div>
+      <div class="meter-grid">
+        <div class="m-col before">
+          <span class="k">Stock config</span>
+          <span class="m-num" id="before">52,300</span>
+          <span class="u">tokens / turn</span>
+        </div>
+        <div class="m-arrow">→</div>
+        <div class="m-col after">
+          <span class="k">On the diet</span>
+          <span class="m-num" id="after">30,900</span>
+          <span class="u">tokens / turn</span>
+        </div>
+      </div>
+      <div class="m-delta">
+        <span>trimmed <b id="delta">21,400 tokens</b> of machinery per request</span>
+        <span class="note">illustrative — your numbers come from <code style="all:unset;color:var(--acid)">/context</code></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section id="idea">
+  <div class="wrap">
+    <div class="sec-head" data-r>
+      <span class="sec-no">01</span>
+      <div>
+        <h2 class="sec-title">The whole trick, in one rule</h2>
+        <p class="sec-sub">Not every deny rule saves tokens. The difference is whether the tool's
+          definition still ships in the payload.</p>
+      </div>
+    </div>
+    <div class="duo">
+      <div class="card" data-r>
+        <span class="tag keep">bare name</span>
+        <code>"deny": ["NotebookEdit"]</code>
+        <p>A bare tool name removes the tool's entire <b style="color:var(--ink)">definition</b>
+          from every request. The schema, the description, the examples — gone from the payload.</p>
+        <div class="verdict yes">✓ blocks the call <span style="color:var(--ink-faint)">&amp;</span> shrinks the tokens</div>
+      </div>
+      <div class="card" data-r>
+        <span class="tag waste">scoped rule</span>
+        <code>"deny": ["Skill(dataviz)"]</code>
+        <p>A scoped rule only blocks the <b style="color:var(--ink)">call</b>. The definition still
+          rides along in the system prompt, still counted, still read — you pay for it anyway.</p>
+        <div class="verdict no">– blocks the call, but keeps the weight</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="ledger">
+  <div class="wrap">
+    <div class="sec-head" data-r>
+      <span class="sec-no">02</span>
+      <div>
+        <h2 class="sec-title">Cross the fat off the receipt</h2>
+        <p class="sec-sub">Run the logging proxy and every tool prints with its byte weight, ranked.
+          Then you deny by name — the biggest line items first.</p>
+      </div>
+    </div>
+    <div class="ledger" data-r>
+      <div class="ledger-h"><span>tool definition</span><span>~tokens · status</span></div>
+      <div class="row cut"><span class="nm">Workflow</span><span class="by">~4,200</span><span class="st removed">removed</span></div>
+      <div class="row cut"><span class="nm">bundled skills catalogue</span><span class="by">~6,800</span><span class="st removed">removed</span></div>
+      <div class="row cut"><span class="nm">Artifact</span><span class="by">~1,300</span><span class="st removed">removed</span></div>
+      <div class="row cut"><span class="nm">Cron·Create / Delete / List</span><span class="by">~1,500</span><span class="st removed">removed</span></div>
+      <div class="row cut"><span class="nm">DesignSync · RemoteTrigger</span><span class="by">~2,100</span><span class="st removed">removed</span></div>
+      <div class="row"><span class="nm">Read · Edit · Bash · Grep</span><span class="by">core</span><span class="st kept">kept</span></div>
+      <div class="row"><span class="nm">Task · Agent</span><span class="by">core</span><span class="st kept">kept</span></div>
+      <div class="ledger-f"><span class="nm">payload after the diet</span><span class="by">↓ lighter</span><span></span></div>
+    </div>
+    <p class="ledger-note" data-r>Weights are illustrative. The proxy (<code style="all:unset;color:var(--acid)">proxy.mjs</code>) writes a real ranked table to <code style="all:unset;color:var(--acid)">./logs</code> from your own sessions.</p>
+  </div>
+</section>
+
+<section id="method">
+  <div class="wrap">
+    <div class="sec-head" data-r>
+      <span class="sec-no">03</span>
+      <div>
+        <h2 class="sec-title">Six steps, measured both ways</h2>
+        <p class="sec-sub">Never cut blind. Weigh before, weigh after — the method adapted from
+          aihero.dev, packaged as a runnable skill.</p>
+      </div>
+    </div>
+    <div class="steps" data-r>
+      <div class="step"><div class="n">1</div><h4>Weigh in</h4><p>Run <code>/context</code>. Record the system / tools / MCP / memory split.</p></div>
+      <div class="step"><div class="n">2</div><h4>Find the fat</h4><p>Run <code>proxy.mjs</code> to rank every tool by byte size — no guessing.</p></div>
+      <div class="step"><div class="n">3</div><h4>Drop features</h4><p>One <code>disable*</code> flag removes a whole feature and its bundled tools.</p></div>
+      <div class="step"><div class="n">4</div><h4>Deny tools</h4><p>Bare names in <code>permissions.deny</code> strip individual definitions.</p></div>
+      <div class="step"><div class="n">5</div><h4>Apply</h4><p><code>apply-config.mjs</code> merges into settings.json — backed up, idempotent.</p></div>
+      <div class="step"><div class="n">6</div><h4>Weigh out</h4><p>Restart, run <code>/context</code> again, confirm the drop.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="config">
+  <div class="wrap">
+    <div class="sec-head" data-r>
+      <span class="sec-no">04</span>
+      <div>
+        <h2 class="sec-title">A menu, not a prescription</h2>
+        <p class="sec-sub">Keep anything you use. Two templates ship with the skill — go aggressive,
+          or stay safe and keep plan mode and clarifying questions.</p>
+      </div>
+    </div>
+    <div class="config-grid">
+      <div class="code" data-r>
+        <div class="code-h"><span class="path">templates/settings.aggressive.json</span><span class="lvl agg">max cut</span></div>
+<pre><span class="pu">{</span>
+  <span class="fl">"permissions"</span>: { <span class="fl">"deny"</span>: [
+    <span class="dl">"EnterPlanMode"</span>, <span class="dl">"ExitPlanMode"</span>,
+    <span class="dl">"NotebookEdit"</span>, <span class="dl">"AskUserQuestion"</span>,
+    <span class="dl">"DesignSync"</span>, <span class="dl">"SendMessage"</span>,
+    <span class="dl">"RemoteTrigger"</span>, <span class="dl">"ReportFindings"</span>,
+    <span class="dl">"ScheduleWakeup"</span>, <span class="dl">"PushNotification"</span>,
+    <span class="dl">"CronCreate"</span>, <span class="dl">"CronDelete"</span>, <span class="dl">"CronList"</span>
+  ] },
+  <span class="kd">"disableBundledSkills"</span>: true,
+  <span class="kd">"disableWorkflows"</span>: true,
+  <span class="kd">"disableRemoteControl"</span>: true,
+  <span class="kd">"disableClaudeAiConnectors"</span>: true,
+  <span class="kd">"disableArtifact"</span>: true
+<span class="pu">}</span></pre>
+      </div>
+      <div class="code" data-r>
+        <div class="code-h"><span class="path">templates/settings.conservative.json</span><span class="lvl safe">keeps plan mode</span></div>
+<pre><span class="pu">{</span>
+  <span class="fl">"permissions"</span>: { <span class="fl">"deny"</span>: [
+    <span class="dl">"DesignSync"</span>, <span class="dl">"PushNotification"</span>,
+    <span class="dl">"RemoteTrigger"</span>, <span class="dl">"ScheduleWakeup"</span>,
+    <span class="dl">"CronCreate"</span>, <span class="dl">"CronDelete"</span>, <span class="dl">"CronList"</span>
+  ] },
+  <span class="kd">"disableWorkflows"</span>: true,
+  <span class="kd">"disableRemoteControl"</span>: true,
+  <span class="kd">"disableClaudeAiConnectors"</span>: true,
+  <span class="kd">"disableArtifact"</span>: true
+  <span class="pu">// plan mode + AskUserQuestion + skills stay</span>
+<span class="pu">}</span></pre>
+      </div>
+    </div>
+    <div class="cmd" data-r>
+      <div><span class="c"># merge into ~/.claude/settings.json — backs up first, dedupes, idempotent</span></div>
+      <div><span class="p">$</span> node scripts/apply-config.mjs</div>
+      <div><span class="p">$</span> node scripts/apply-config.mjs <span class="c">--project</span>   <span class="c"># this project only</span></div>
+      <div><span class="p">$</span> node scripts/apply-config.mjs <span class="c">--dry-run</span>   <span class="c"># preview, write nothing</span></div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <div class="sec-head" data-r>
+      <span class="sec-no">05</span>
+      <div>
+        <h2 class="sec-title">What's in the box</h2>
+        <p class="sec-sub">A self-contained skill — dependency-free Node, no API keys, no build.</p>
+      </div>
+    </div>
+    <table class="files" data-r>
+      <tr><td class="f">SKILL.md</td><td class="d">The skill — method, quick start, the menu.</td></tr>
+      <tr><td class="f">REFERENCE.md</td><td class="d">Full 6-step method plus a per-tool cost/benefit table: what each deny entry actually costs you.</td></tr>
+      <tr><td class="f">proxy.mjs</td><td class="d">Logging proxy that forwards to the real API untouched and prints a ranked tool-size table. Node built-ins only.</td></tr>
+      <tr><td class="f">scripts/apply-config.mjs</td><td class="d">Deterministic settings merge — backup, dedupe, preserve order. Global or per-project.</td></tr>
+      <tr><td class="f">templates/</td><td class="d">Aggressive (max cut) and conservative (safe) settings templates.</td></tr>
+    </table>
+    <div class="cmd" data-r style="margin-top:26px">
+      <div><span class="p">$</span> git clone https://github.com/cskwork/context-diet-skill.git</div>
+      <div><span class="p">$</span> cp -r context-diet-skill ~/.claude/skills/context-diet</div>
+      <div><span class="c"># then, in Claude Code:</span> /context-diet</div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="foot" data-r>
+      <div class="big">Read less machinery.<br>Reach the <b>problem</b> faster.</div>
+      <div class="foot-links">
+        <a href="https://github.com/cskwork/context-diet-skill">→ github.com/cskwork/context-diet-skill</a>
+        <a href="https://github.com/cskwork/context-diet-skill#readme">→ readme &amp; install</a>
+        <a href="https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt">→ source article, aihero.dev</a>
+      </div>
+    </div>
+    <div class="credit">
+      <span>Technique by aihero.dev · packaged as a skill by <a href="https://github.com/cskwork">cskwork</a> · MIT</span>
+      <span>✂&#65039; measure · deny · restart · repeat</span>
+    </div>
+  </div>
+</footer>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // count-down animation on the token meter
+  var beforeEl = document.getElementById('before');
+  var afterEl  = document.getElementById('after');
+  var deltaEl  = document.getElementById('delta');
+  var BEFORE = 52300, AFTER = 30900;
+  var fmt = function(n){ return Math.round(n).toLocaleString('en-US'); };
+  deltaEl.textContent = fmt(BEFORE - AFTER) + ' tokens';
+
+  function animateCount(){
+    if(reduce){ beforeEl.textContent = fmt(BEFORE); afterEl.textContent = fmt(AFTER); return; }
+    var dur = 1500, t0 = null;
+    var ease = function(x){ return 1 - Math.pow(1 - x, 3); };
+    function frame(ts){
+      if(!t0) t0 = ts;
+      var p = Math.min((ts - t0)/dur, 1), e = ease(p);
+      beforeEl.textContent = fmt(BEFORE * e);              // count up to full bloat
+      afterEl.textContent  = fmt(BEFORE - (BEFORE-AFTER)*e); // then settle to the lean number
+      if(p < 1) requestAnimationFrame(frame);
+      else { beforeEl.textContent = fmt(BEFORE); afterEl.textContent = fmt(AFTER); }
+    }
+    requestAnimationFrame(frame);
+  }
+
+  // strike-through on the hero word draws in
+  var cut = document.querySelector('h1 .cut');
+  if(cut && reduce) cut.style.setProperty('--sx','1');
+
+  if(reduce){
+    animateCount();
+  } else {
+    // reveal-on-scroll
+    document.documentElement.classList.add('anim');
+    var io = new IntersectionObserver(function(entries){
+      entries.forEach(function(en){ if(en.isIntersecting){ en.target.classList.add('in'); io.unobserve(en.target); } });
+    }, {threshold:.12, rootMargin:'0px 0px -8% 0px'});
+    document.querySelectorAll('[data-r]').forEach(function(el){ io.observe(el); });
+
+    if(cut){ cut.style.setProperty('--sx','0'); }
+    // kick the hero animations after first paint
+    requestAnimationFrame(function(){
+      animateCount();
+      if(cut){ cut.style.transition='--sx .7s ease .5s'; setTimeout(function(){ cut.style.setProperty('--sx','1'); },550); }
+    });
+  }
+})();
+</script>
+</body>
+</html>
