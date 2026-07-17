@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "deny": [
+      "DesignSync",
+      "PushNotification",
+      "RemoteTrigger",
+      "ScheduleWakeup",
+      "CronCreate",
+      "CronDelete",
+      "CronList"
+    ]
+  },
+  "disableWorkflows": true,
+  "disableRemoteControl": true,
+  "disableClaudeAiConnectors": true,
+  "disableArtifact": true
+}
