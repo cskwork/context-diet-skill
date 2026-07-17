@@ -7,6 +7,8 @@ catalogue, and feature instructions that ship on every turn and get billed every
 Method adapted from aihero.dev,
 [How to kill the bloat in Claude Code's system prompt](https://www.aihero.dev/how-to-kill-the-bloat-in-claude-codes-system-prompt).
 
+**Live:** https://cskwork.github.io/context-diet-skill/
+
 ## What's inside
 
 | File | Purpose |
